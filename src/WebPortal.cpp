@@ -4,6 +4,11 @@
 #include "ConfigFile.h"
 #include <ArduinoJson.h>
 #include "FlasherTask.h"
+#include "OTAUpdate.h"
+
+// OTA State
+static bool shouldUpdateFirmware = false;
+static String updateFirmwareUrl = "";
 
 // Note: Ensure ArduinoJson is installed
 // If using V6, DynamicJsonDocument doc(1024);
@@ -69,6 +74,13 @@ const char index_html[] PROGMEM = R"rawliteral(
     <div class="section">
       <h3>Activity Log</h3>
       <textarea id="sysLoop" rows="10" style="width:100%; font-family:monospace; font-size:12px; resize:vertical;" readonly></textarea>
+    </div>
+
+    <!-- System Upgrade -->
+    <div class="section">
+      <h3>System Upgrade</h3>
+      <button onclick="checkForUpdate()">Check for Updates 🔄</button>
+      <div id="updateStatus" style="margin-top:10px;"></div>
     </div>
   </div>
 
@@ -170,6 +182,35 @@ const char index_html[] PROGMEM = R"rawliteral(
        }
     });
   }, 1000);
+
+  function checkForUpdate() {
+      const statusDiv = document.getElementById('updateStatus');
+      statusDiv.innerText = "Checking...";
+      fetch('/update_check').then(res => res.json()).then(data => {
+          if(data.available) {
+              statusDiv.innerHTML = 
+                  `New version <strong>${data.version}</strong> available!<br>
+                   <small>${data.notes}</small><br>
+                   <button onclick="performUpdate('${data.url}')" style="background:#28a745; margin-top:5px;">Update Now 🚀</button>`;
+          } else {
+              statusDiv.innerText = "Firmware is up to date (" + data.version + ")";
+          }
+      }).catch(err => {
+         statusDiv.innerText = "Error checking update: " + err;
+      });
+  }
+
+  function performUpdate(url) {
+      if(!confirm("Start Update? Device will reboot.")) return;
+       document.getElementById('updateStatus').innerText = "Starting Update... Please Wait...";
+       fetch('/update_perform', {
+           method: 'POST',
+           headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+           body: 'url=' + encodeURIComponent(url)
+       }).then(res => res.text()).then(txt => {
+           log("Update: " + txt);
+       });
+  }
 </script>
 </body>
 </html>
@@ -630,6 +671,30 @@ void WebPortal::begin() {
         }
     });
 
+    // Check Update Handler
+    server.on("/update_check", HTTP_GET, [](AsyncWebServerRequest *request){
+        UpdateInfo info = OTAUpdate.checkForUpdate();
+        DynamicJsonDocument doc(1024);
+        doc["available"] = info.available;
+        doc["version"] = info.version;
+        doc["url"] = info.url;
+        doc["notes"] = info.releaseNotes;
+        String output;
+        serializeJson(doc, output);
+        request->send(200, "application/json", output);
+    });
+
+    // Perform Update Handler
+    server.on("/update_perform", HTTP_POST, [](AsyncWebServerRequest *request){
+        if(request->hasParam("url", true)) {
+           updateFirmwareUrl = request->getParam("url", true)->value();
+           shouldUpdateFirmware = true;
+           request->send(200, "text/plain", "Update Initiated");
+        } else {
+           request->send(400, "text/plain", "Missing URL");
+        }
+    });
+
     server.begin();
     Serial.println("Web Server Started");
 }
@@ -707,5 +772,16 @@ void WebPortal::handleUpload(AsyncWebServerRequest *request, String filename, si
 }
 
 void WebPortal::loop() {
-    
+    if(shouldUpdateFirmware) {
+        shouldUpdateFirmware = false;
+        Flasher.setStatus("Starting OTA Update...");
+        String res = OTAUpdate.performUpdate(updateFirmwareUrl); 
+        if(res == "Success") {
+             Flasher.setStatus("OTA Success! Rebooting...");
+             delay(2000);
+             ESP.restart();
+        } else {
+             Flasher.setStatus("OTA Failed: " + res);
+        }
+    }
 }

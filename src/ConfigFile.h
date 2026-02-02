@@ -14,6 +14,15 @@
 // Comment out the line below to DISABLE the Web Portal and WiFi
 #define ENABLE_WEB_PORTAL 
 
+// --- OTA Configuration ---
+#define FIRMWARE_VERSION "v1.0.0"
+#define GITHUB_REPO "Fire7ly/Arduino-esp32-serial-flasher"
+
+// --- Internet (Station) Configuration for OTA ---
+// Set these to your router's credentials to allow firmware updates
+#define STA_SSID "test"
+#define STA_PASS "test12345"
+
 // --- SD Card Configuration ---
 // ESP32-S3 SD_MMC Pins (Default for 1-bit mode if needed, or 4-bit)
 // Using SD_MMC is faster than SPI.

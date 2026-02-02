@@ -11,13 +11,23 @@
 
 #ifdef ENABLE_WEB_PORTAL
 void setupWiFi() {
-    Serial.print("Setting up AP mode: ");
+    Serial.println("Setting up WiFi...");
+    WiFi.mode(WIFI_AP_STA);
+
+    // 1. Access Point (For User Control)
+    Serial.print("Starting AP: ");
     Serial.println(WIFI_SSID);
     WiFi.softAP(WIFI_SSID, WIFI_PASS);
     
     IPAddress IP = WiFi.softAPIP();
     Serial.print("AP IP address: ");
     Serial.println(IP);
+
+    // 2. Station (For OTA Updates)
+    Serial.print("Connecting to Internet (STA): ");
+    Serial.println(STA_SSID);
+    WiFi.begin(STA_SSID, STA_PASS);
+    // We don't block here. OTA will check connection status later.
 }
 #endif
 
