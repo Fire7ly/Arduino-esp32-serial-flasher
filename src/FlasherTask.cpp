@@ -117,8 +117,36 @@ String FlasherTask::getStatus() {
     return flashStatus;
 }
 
+// Max log size to prevent OOM
+const size_t MAX_LOG_SIZE = 200;
+
 void FlasherTask::setStatus(String msg) {
     flashStatus = msg;
+    log(msg); // Auto-log status changes
+}
+
+void FlasherTask::log(String msg) {
+    if (_logs.size() >= MAX_LOG_SIZE) {
+        _logs.erase(_logs.begin()); // Remove oldest
+    }
+    // Add timestamp or format if needed? For now just raw msg.
+    _logs.push_back(msg);
+    // Serial is already handled by callers usually, but good to ensure
+    // Serial.println("LOG: " + msg); 
+}
+
+std::vector<String> FlasherTask::getLogs(size_t start_index) {
+    std::vector<String> newLogs;
+    if (start_index < _logs.size()) {
+        for (size_t i = start_index; i < _logs.size(); i++) {
+            newLogs.push_back(_logs[i]);
+        }
+    }
+    return newLogs;
+}
+
+size_t FlasherTask::getLogCount() {
+    return _logs.size();
 }
 
 void FlasherTask::flasherTask(void *pvParameters) {

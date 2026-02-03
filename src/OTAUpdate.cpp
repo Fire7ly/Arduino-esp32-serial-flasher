@@ -1,8 +1,10 @@
 #include "OTAUpdate.h"
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <Update.h>
 #include "ConfigFile.h"
+#include "FlasherTask.h"
 
 OTAUpdateClass OTAUpdate;
 
@@ -10,11 +12,30 @@ OTAUpdateClass OTAUpdate;
 const char* GITHUB_API_URL = "https://api.github.com/repos/" GITHUB_REPO "/releases/latest";
 
 UpdateInfo OTAUpdateClass::checkForUpdate() {
-    UpdateInfo info = {false, "", "", ""};
+    UpdateInfo info = {false, "", "", "", ""};
     
     if (WiFi.status() != WL_CONNECTED) {
-        Serial.println("Error: WiFi not connected");
-        return info;
+        Serial.println("WiFi not connected. Attempting to reconnect...");
+        WiFi.begin(STA_SSID, STA_PASS);
+        
+        int timeout = 0;
+        while(WiFi.status() != WL_CONNECTED && timeout < 20) { // 10 seconds (20 * 500ms)
+            delay(500);
+            Serial.print(".");
+            timeout++;
+        }
+        Serial.println();
+        
+        if (WiFi.status() != WL_CONNECTED) {
+            info.error = "WiFi Connection Failed";
+            Serial.println("Error: " + info.error);
+            Flasher.setStatus("OTA Error: " + info.error);
+            return info;
+        } else {
+            Serial.print("Connected! IP: ");
+            Serial.println(WiFi.localIP());
+            Flasher.setStatus("WiFi Connected: " + WiFi.localIP().toString());
+        }
     }
 
     HTTPClient http;
@@ -58,11 +79,13 @@ UpdateInfo OTAUpdateClass::checkForUpdate() {
                 Serial.println("Error: JSON parsing failed");
             }
         } else {
-            Serial.printf("Error: HTTP GET failed, code %d\n", httpCode);
+            info.error = "HTTP API Error " + String(httpCode);
+            Serial.printf("Error: %s\n", info.error.c_str());
         }
         http.end();
     } else {
-        Serial.println("Error: Unable to connect to GitHub API");
+        info.error = "Connection to GitHub API failed";
+        Serial.println("Error: " + info.error);
     }
     
     return info;
@@ -73,6 +96,7 @@ String OTAUpdateClass::performUpdate(String url) {
     
     Serial.println("Starting OTA Update...");
     Serial.println(url);
+    Flasher.setStatus("OTA: Downloading...");
 
     HTTPClient http;
     WiFiClientSecure client;
@@ -86,11 +110,38 @@ String OTAUpdateClass::performUpdate(String url) {
         if (httpCode == HTTP_CODE_OK) {
             int contentLength = http.getSize();
             Serial.printf("Download size: %d\n", contentLength);
+            Flasher.setStatus("OTA: Size " + String(contentLength) + " bytes");
 
             if(contentLength > 0) {
                 bool canBegin = Update.begin(contentLength);
                 if (canBegin) {
-                    size_t written = Update.writeStream(*http.getStreamPtr());
+                    Flasher.setStatus("OTA: Begin OK. Downloading...");
+                    
+                    // Manual Stream Loop for Progress
+                    WiFiClient *stream = http.getStreamPtr();
+                    uint8_t buff[1024];
+                    size_t written = 0;
+                    size_t total = contentLength;
+                    
+                    while(written < total) {
+                        size_t size = stream->available();
+                        if(size) {
+                            int c = stream->readBytes(buff, ((size > sizeof(buff)) ? sizeof(buff) : size));
+                            size_t ret = Update.write(buff, c);
+                             if (ret != c) {
+                                Flasher.setStatus("OTA Write Error!");
+                                return "Error: Write mismatch";
+                             }
+                            written += c;
+                            
+                            // Log every 10%
+                            if((written * 100 / total) % 10 == 0) {
+                                Flasher.setStatus("OTA: " + String(written*100/total) + "%");
+                            }
+                        }
+                        delay(1);
+                    }
+                    
                     if (written == contentLength) {
                         Serial.println("Written : " + String(written) + " successfully");
                     } else {
@@ -107,17 +158,22 @@ String OTAUpdateClass::performUpdate(String url) {
                             return "Error: Update not finished";
                         }
                     } else {
-                        Serial.println("Error Occurred. Error #: " + String(Update.getError()));
-                        return "Error: " + String(Update.getError());
+                        String code = String(Update.getError());
+                        Serial.println("Error Occurred. Error #: " + code);
+                        Flasher.setStatus("OTA Error Code: " + code);
+                        return "Error: " + code;
                     }
                 } else {
                     Serial.println("Not enough space to begin OTA");
+                    Flasher.setStatus("OTA Error: Not enough space");
                     return "Error: Not enough space";
                 }
             } else {
+                Flasher.setStatus("OTA Error: Content-Length is 0");
                 return "Error: Content-Length is 0";
             }
         } else {
+            Flasher.setStatus("OTA HTTP Error: " + String(httpCode));
             return "Error: HTTP Code " + String(httpCode);
         }
         http.end();

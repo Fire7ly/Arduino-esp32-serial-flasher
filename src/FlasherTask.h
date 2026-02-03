@@ -18,9 +18,13 @@ public:
     int getProgress();
     String getStatus();
     void setStatus(String msg);
+    void log(String msg);
+    std::vector<String> getLogs(size_t start_index);
+    size_t getLogCount();
 
 private:
     static void flasherTask(void *pvParameters);
+    std::vector<String> _logs;
 };
 
 extern FlasherTask Flasher;

@@ -9,6 +9,7 @@ struct UpdateInfo {
     String version;
     String url;
     String releaseNotes;
+    String error;
 };
 
 class OTAUpdateClass {

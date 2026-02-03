@@ -87,15 +87,29 @@ const char index_html[] PROGMEM = R"rawliteral(
 <script>
   let availableFiles = [];
   let lastStatus = "";
+  let lastLogIndex = 0;
 
   function log(msg) {
     const box = document.getElementById('sysLoop');
     const time = new Date().toLocaleTimeString();
-    const lastLine = box.value.trim().split('\n').pop();
-    if(lastLine && lastLine.includes(msg)) return;
     box.value += `[${time}] ${msg}\n`;
     box.scrollTop = box.scrollHeight;
   }
+
+  function fetchLogs() {
+    fetch('/logs?index=' + lastLogIndex)
+        .then(res => res.json())
+        .then(data => {
+            if(data.logs && data.logs.length > 0) {
+                data.logs.forEach(l => log(l));
+                lastLogIndex = data.nextIndex;
+            }
+        })
+        .catch(e => console.log("Log poll error", e));
+  }
+  
+  // Poll logs frequently (500ms)
+  setInterval(fetchLogs, 500);
 
   fetch('/list').then(res => res.json()).then(data => {
     availableFiles = data;
@@ -187,11 +201,13 @@ const char index_html[] PROGMEM = R"rawliteral(
       const statusDiv = document.getElementById('updateStatus');
       statusDiv.innerText = "Checking...";
       fetch('/update_check').then(res => res.json()).then(data => {
-          if(data.available) {
+          if(data.error && data.error.length > 0) {
+              statusDiv.innerText = "Update Failed: " + data.error + " \u274C";
+          } else if(data.available) {
               statusDiv.innerHTML = 
                   `New version <strong>${data.version}</strong> available!<br>
                    <small>${data.notes}</small><br>
-                   <button onclick="performUpdate('${data.url}')" style="background:#28a745; margin-top:5px;">Update Now 🚀</button>`;
+                   <button onclick="performUpdate('${data.url}')" style="background:#28a745; margin-top:5px;">Update Now \uD83D\uDE80</button>`;
           } else {
               statusDiv.innerText = "Firmware is up to date (" + data.version + ")";
           }
@@ -603,6 +619,26 @@ void WebPortal::begin() {
         request->send(200, "text/plain", Flasher.getStatus());
     });
 
+    // Logs Handler
+    server.on("/logs", HTTP_GET, [](AsyncWebServerRequest *request){
+        size_t index = 0;
+        if(request->hasParam("index")) {
+            index = request->getParam("index")->value().toInt();
+        }
+        
+        std::vector<String> newLogs = Flasher.getLogs(index);
+        DynamicJsonDocument doc(4096);
+        JsonArray arr = doc.createNestedArray("logs");
+        for(const auto &l : newLogs) {
+            arr.add(l);
+        }
+        doc["nextIndex"] = Flasher.getLogCount();
+        
+        String output;
+        serializeJson(doc, output);
+        request->send(200, "application/json", output);
+    });
+
     // Delete Handler
     server.on("/delete", HTTP_GET, [](AsyncWebServerRequest *request){
         if(request->hasParam("name")){
@@ -679,6 +715,7 @@ void WebPortal::begin() {
         doc["version"] = info.version;
         doc["url"] = info.url;
         doc["notes"] = info.releaseNotes;
+        doc["error"] = info.error;
         String output;
         serializeJson(doc, output);
         request->send(200, "application/json", output);
