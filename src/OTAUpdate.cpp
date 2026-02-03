@@ -5,6 +5,7 @@
 #include <Update.h>
 #include "ConfigFile.h"
 #include "FlasherTask.h"
+#include <esp_task_wdt.h>
 
 OTAUpdateClass OTAUpdate;
 
@@ -21,6 +22,7 @@ UpdateInfo OTAUpdateClass::checkForUpdate() {
         int timeout = 0;
         while(WiFi.status() != WL_CONNECTED && timeout < 20) { // 10 seconds (20 * 500ms)
             delay(500);
+            esp_task_wdt_reset(); // Feed WDT
             Serial.print(".");
             timeout++;
         }
@@ -68,12 +70,14 @@ UpdateInfo OTAUpdateClass::checkForUpdate() {
                     }
                 }
                 
-                // Simple version comparison (string inequality)
-                if (latestVersion != FIRMWARE_VERSION) {
+                // Smart Version Comparison
+                int comparison = compareVersions(latestVersion, FIRMWARE_VERSION);
+                if (comparison > 0) {
                     info.available = true;
-                    Serial.printf("New version available: %s\n", latestVersion.c_str());
+                    Serial.printf("New version available: %s (Current: %s)\n", latestVersion.c_str(), FIRMWARE_VERSION);
                 } else {
-                    Serial.println("Firmware is up to date.");
+                    info.available = false; // Explicitly ensure false if not newer
+                    Serial.printf("Firmware is up to date (Current: %s, Cloud: %s)\n", FIRMWARE_VERSION, latestVersion.c_str());
                 }
             } else {
                 Serial.println("Error: JSON parsing failed");
@@ -88,7 +92,41 @@ UpdateInfo OTAUpdateClass::checkForUpdate() {
         Serial.println("Error: " + info.error);
     }
     
+    _cachedInfo = info; // Cache result
     return info;
+}
+
+// Helper to compare semantic versions: 1 if v1 > v2, -1 if v1 < v2, 0 if equal
+int OTAUpdateClass::compareVersions(String v1, String v2) {
+    // Remove 'v' prefix if present
+    if (v1.startsWith("v")) v1 = v1.substring(1);
+    if (v2.startsWith("v")) v2 = v2.substring(1);
+
+    int i1 = 0, i2 = 0;
+    while (i1 < v1.length() || i2 < v2.length()) {
+        int n1 = 0, n2 = 0;
+        
+        while (i1 < v1.length() && v1.charAt(i1) != '.') {
+            n1 = n1 * 10 + (v1.charAt(i1) - '0');
+            i1++;
+        }
+        
+        while (i2 < v2.length() && v2.charAt(i2) != '.') {
+            n2 = n2 * 10 + (v2.charAt(i2) - '0');
+            i2++;
+        }
+
+        if (n1 > n2) return 1;
+        if (n1 < n2) return -1;
+
+        i1++;
+        i2++;
+    }
+    return 0;
+}
+
+UpdateInfo OTAUpdateClass::getCachedUpdateInfo() {
+    return _cachedInfo;
 }
 
 String OTAUpdateClass::performUpdate(String url) {
@@ -140,6 +178,7 @@ String OTAUpdateClass::performUpdate(String url) {
                             }
                         }
                         delay(1);
+                        esp_task_wdt_reset(); // Feed WDT
                     }
                     
                     if (written == contentLength) {

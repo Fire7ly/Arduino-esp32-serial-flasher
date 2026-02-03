@@ -16,6 +16,11 @@ class OTAUpdateClass {
 public:
     UpdateInfo checkForUpdate();
     String performUpdate(String url);
+    UpdateInfo getCachedUpdateInfo();
+
+private:
+    UpdateInfo _cachedInfo;
+    int compareVersions(String v1, String v2);
 };
 
 extern OTAUpdateClass OTAUpdate;

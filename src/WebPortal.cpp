@@ -42,6 +42,10 @@ const char index_html[] PROGMEM = R"rawliteral(
   <div class="container">
     <h2>ESP32 Advanced Web Flasher</h2>
     
+    <div id="notificationArea" style="display:none; background:#ffc107; color:#333; padding:15px; border-radius:6px; margin-bottom:20px; text-align:center; border:1px solid #d39e00;">
+       <!-- Notification Content -->
+    </div>
+    
     <div class="section" style="text-align:center;">
         <a href="/files"><button style="width:100%; max-width: 300px;">Open File Manager 📂</button></a>
     </div>
@@ -197,6 +201,25 @@ const char index_html[] PROGMEM = R"rawliteral(
     });
   }, 1000);
 
+  // Check for notification on load
+  function checkNotification() {
+      fetch('/update_check?cached=true') // Check without forcing a new request immediately if possible
+        .then(res => res.json())
+        .then(data => {
+          if(data.available) {
+              const notif = document.getElementById('notificationArea');
+              notif.style.display = 'block';
+              notif.innerHTML = `
+                  <strong>New Update Available! (${data.version})</strong>
+                  <button onclick="performUpdate('${data.url}')" style="margin-left:15px; background:white; color:#333; border:none; padding:5px 10px; cursor:pointer;">Update Now</button>
+              `;
+          }
+      });
+  }
+  
+  // Call on load
+  setTimeout(checkNotification, 2000);
+
   function checkForUpdate() {
       const statusDiv = document.getElementById('updateStatus');
       statusDiv.innerText = "Checking...";
@@ -218,7 +241,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 
   function performUpdate(url) {
       if(!confirm("Start Update? Device will reboot.")) return;
-       document.getElementById('updateStatus').innerText = "Starting Update... Please Wait...";
+       document.getElementById('updateStatus').innerText = "Starting Update... Please Wait..."; // Also show here
        fetch('/update_perform', {
            method: 'POST',
            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
@@ -709,7 +732,16 @@ void WebPortal::begin() {
 
     // Check Update Handler
     server.on("/update_check", HTTP_GET, [](AsyncWebServerRequest *request){
-        UpdateInfo info = OTAUpdate.checkForUpdate();
+        UpdateInfo info;
+        if(request->hasParam("cached") && request->getParam("cached")->value() == "true") {
+            info = OTAUpdate.getCachedUpdateInfo();
+            // If cache is empty/invalid, maybe force check? 
+            // For now, assume if cache is empty it just returns "available: false" which is fine.
+            // If user wants to force check, they click the button which calls without cached=true.
+        } else {
+             info = OTAUpdate.checkForUpdate();
+        }
+        
         DynamicJsonDocument doc(1024);
         doc["available"] = info.available;
         doc["version"] = info.version;
@@ -734,6 +766,12 @@ void WebPortal::begin() {
 
     server.begin();
     Serial.println("Web Server Started");
+    
+    // Auto-check for updates on startup (runs in Sync context or should be safe now with WDT fix)
+    // We launch this after server start so it doesn't block server init? 
+    // Actually blocking here is fine as long as WDT is happy.
+    Serial.println("Performing initial OTA check...");
+    OTAUpdate.checkForUpdate();
 }
 
 void WebPortal::handleUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
