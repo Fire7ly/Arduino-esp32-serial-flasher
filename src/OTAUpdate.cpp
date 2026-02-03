@@ -160,6 +160,7 @@ String OTAUpdateClass::performUpdate(String url) {
                     uint8_t buff[1024];
                     size_t written = 0;
                     size_t total = contentLength;
+                    int lastProgress = -1;
                     
                     while(written < total) {
                         size_t size = stream->available();
@@ -173,8 +174,10 @@ String OTAUpdateClass::performUpdate(String url) {
                             written += c;
                             
                             // Log every 10%
-                            if((written * 100 / total) % 10 == 0) {
-                                Flasher.setStatus("OTA: " + String(written*100/total) + "%");
+                            int progress = (written * 100) / total;
+                            if(progress != lastProgress) {
+                                Flasher.setStatus("OTA: " + String(progress) + "%");
+                                lastProgress = progress;
                             }
                         }
                         delay(1);
