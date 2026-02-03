@@ -90,7 +90,6 @@ jobs:
         tag_name: ${{ env.TAG_NAME }}
         name: Release ${{ env.TAG_NAME }}
         files: |
-          build/firmware-*.bin
           build/*.bin
           build/*.elf
           build/*.hex
