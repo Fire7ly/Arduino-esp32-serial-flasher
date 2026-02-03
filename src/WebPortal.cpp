@@ -774,14 +774,25 @@ void WebPortal::begin() {
     OTAUpdate.checkForUpdate();
 }
 
-void WebPortal::handleUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
-    static File uploadFile;
-    static String finalFilename; // Store the actual name used
+// Helper to keep track of upload file across packets
+// Note: This simple static implementation assumes single-user, single-upload access.
+static File uploadFile;
+static String finalFilename; 
 
+void WebPortal::handleUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
     if(!index){
+        // Begin Upload: Ensure any previous handle is closed
+        if(uploadFile) {
+            uploadFile.close();
+        }
+
+        Serial.printf("Upload Start: %s\n", filename.c_str());
+        
         // Validation: Only allow .bin files
         if(!filename.endsWith(".bin") && !filename.endsWith(".BIN")) {
              Serial.println("Error: Upload rejected. Only .bin files allowed.");
+             request->send(400, "text/plain", "Only .bin files allowed");
+             // We can't easily stop the upload stream from here, but we can refuse to open the file.
              return; 
         }
 
@@ -800,13 +811,9 @@ void WebPortal::handleUpload(AsyncWebServerRequest *request, String filename, si
                     ext = filename.substring(filename.lastIndexOf('.'));
                 }
                 
-                // Smart Truncation: Keep Start + ".." + End to preserve version/suffix
-                // Total target: 30 chars. Ext takes e.g. 4. Remaining: 26.
-                // ".." takes 2. Remaining 24. Split 12 + 12.
-                
                 int extLen = ext.length();
-                int baseLen = 30 - extLen; // e.g. 26
-                int half = (baseLen - 2) / 2; // e.g. (26-2)/2 = 12
+                int baseLen = 30 - extLen; 
+                int half = (baseLen - 2) / 2; 
                 
                 String start = filename.substring(0, half);
                 String end = filename.substring(filename.length() - extLen - half, filename.length() - extLen);
@@ -823,11 +830,20 @@ void WebPortal::handleUpload(AsyncWebServerRequest *request, String filename, si
             uploadFile = SPIFFS.open(path, FILE_WRITE);
         #endif
         
-        Serial.printf("Upload Start: %s\n", finalFilename.c_str());
-        Flasher.setStatus("Uploading " + finalFilename + " (0%)");
+        if(!uploadFile) {
+            Serial.println("Error: Failed to open file for writing at " + String(finalFilename));
+            // e.g. SD card missing or full
+        } else {
+            Flasher.setStatus("Uploading " + finalFilename + " (0%)");
+        }
     }
+    
+    // Write Data
     if(uploadFile){
-        uploadFile.write(data, len);
+        if(uploadFile.write(data, len) != len){
+            Serial.println("Error: Write failed!");
+        }
+        
         // Progress Calcs
         size_t total = request->contentLength();
         if(total > 0 && index + len < total) {
@@ -837,11 +853,16 @@ void WebPortal::handleUpload(AsyncWebServerRequest *request, String filename, si
             }
         }
     }
+    
+    // Finalize
     if(final){
         if(uploadFile){
             uploadFile.close();
             Serial.printf("Upload End: %s, %u bytes\n", finalFilename.c_str(), index+len);
             Flasher.setStatus("Upload Complete: " + finalFilename);
+        } else {
+             // If file wasn't open (e.g. rejection), maybe log
+             Serial.println("Upload finished but file was not open (Rejected?)");
         }
     }
 }

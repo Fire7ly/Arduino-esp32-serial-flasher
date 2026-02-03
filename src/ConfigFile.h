@@ -15,7 +15,13 @@
 #define ENABLE_WEB_PORTAL 
 
 // --- OTA Configuration ---
-#define FIRMWARE_VERSION "v1.0.0"
+#if __has_include("Version.h")
+  #include "Version.h"
+#endif
+
+#ifndef FIRMWARE_VERSION
+  #define FIRMWARE_VERSION "v1.0.0" 
+#endif
 #define GITHUB_REPO "Fire7ly/Arduino-esp32-serial-flasher"
 
 // --- Internet (Station) Configuration for OTA ---

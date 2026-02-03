@@ -40,6 +40,20 @@ jobs:
         git clone https://github.com/me-no-dev/AsyncTCP.git
         git clone https://github.com/me-no-dev/ESPAsyncWebServer.git
 
+    - name: Generate Release Tag
+      id: tag_version
+      run: |
+        if [[ $GITHUB_REF == refs/tags/* ]]; then
+          echo "TAG_NAME=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+        else
+          echo "TAG_NAME=v1.0.${{ github.run_number }}" >> $GITHUB_ENV
+        fi
+
+    - name: Set Firmware Version
+      run: |
+        echo "#define FIRMWARE_VERSION \"${{ env.TAG_NAME }}\"" > src/Version.h
+        cat src/Version.h
+
     - name: Compile Sketch (ESP32-S3 8MB)
       run: |
         mkdir -p ./build
@@ -51,20 +65,18 @@ jobs:
         # Display log to console for debugging
         cat ./build/build_log.txt
 
-    - name: Generate Release Tag
-      id: tag_version
+    - name: Rename Firmware
       run: |
-        if [[ $GITHUB_REF == refs/tags/* ]]; then
-          echo "TAG_NAME=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
-        else
-          echo "TAG_NAME=v1.0.${{ github.run_number }}" >> $GITHUB_ENV
-        fi
+        # Rename the main binary to include version
+        mv build/Arduino-esp32-serial-flasher.ino.bin build/firmware-${{ env.TAG_NAME }}.bin
+        echo "Renamed binary to firmware-${{ env.TAG_NAME }}.bin"
 
     - name: Upload Build Artifacts
       uses: actions/upload-artifact@v4
       with:
         name: firmware-artifacts
         path: |
+          build/firmware-*.bin
           build/*.bin
           build/*.elf
           build/*.hex
@@ -78,6 +90,7 @@ jobs:
         tag_name: ${{ env.TAG_NAME }}
         name: Release ${{ env.TAG_NAME }}
         files: |
+          build/firmware-*.bin
           build/*.bin
           build/*.elf
           build/*.hex
