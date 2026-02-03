@@ -18,7 +18,7 @@ WebPortal WebManager;
 
 // Advanced UI with Multi-File Flashing Support
 // Main Flasher Page
-const char index_html[] PROGMEM = R"rawliteral(
+const char index_html[] = R"rawliteral(
 <!DOCTYPE HTML><html>
 <head>
   <title>ESP32 Advanced Flasher</title>
@@ -40,15 +40,12 @@ const char index_html[] PROGMEM = R"rawliteral(
 </head>
 <body>
   <div class="container">
-    <h2>ESP32 Advanced Web Flasher</h2>
+    <h2>ESP32 Advanced Web Flasher %FIRMWARE_VERSION%</h2>
     
     <div id="notificationArea" style="display:none; background:#ffc107; color:#333; padding:15px; border-radius:6px; margin-bottom:20px; text-align:center; border:1px solid #d39e00;">
        <!-- Notification Content -->
     </div>
     
-    <div class="section" style="text-align:center;">
-        <a href="/files"><button style="width:100%; max-width: 300px;">Open File Manager 📂</button></a>
-    </div>
 
     <!-- Target Selection -->
     <div class="section">
@@ -256,7 +253,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 )rawliteral";
 
 // File Manager Page
-const char files_html[] PROGMEM = R"rawliteral(
+const char files_html[] = R"rawliteral(
 <!DOCTYPE HTML><html>
 <head>
   <title>ESP32 File Manager</title>
@@ -553,7 +550,9 @@ const char files_html[] PROGMEM = R"rawliteral(
 void WebPortal::begin() {
     // Serve UI
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
-        request->send_P(200, "text/html", index_html);
+        String html = String(index_html);
+        html.replace("%FIRMWARE_VERSION%", FIRMWARE_VERSION);
+        request->send(200, "text/html", html);
     });
 
     // List Files (For API)
@@ -578,7 +577,7 @@ void WebPortal::begin() {
 
     // File Manager UI
     server.on("/files", HTTP_GET, [](AsyncWebServerRequest *request){
-        request->send_P(200, "text/html", files_html);
+        request->send(200, "text/html", files_html);
     });
 
     // Upload Handler
@@ -767,11 +766,34 @@ void WebPortal::begin() {
     server.begin();
     Serial.println("Web Server Started");
     
-    // Auto-check for updates on startup (runs in Sync context or should be safe now with WDT fix)
-    // We launch this after server start so it doesn't block server init? 
-    // Actually blocking here is fine as long as WDT is happy.
-    Serial.println("Performing initial OTA check...");
-    OTAUpdate.checkForUpdate();
+    // Auto-check for updates on startup
+    // We run this in the background / main loop context usually, but here is fine 
+    // IF it doesn't block too long. Ideally move this to loop() too? 
+    // For now, let's keep it but maybe it's safer in loop.
+    // Let's actually move the initial check to the FIRST loop call.
+}
+
+void WebPortal::loop() {
+    // Handle OTA Update in Main Loop Context
+    if(shouldUpdateFirmware && updateFirmwareUrl.length() > 0) {
+        Flasher.setStatus("Starting OTA from Main Loop...");
+        Serial.println("Triggering OTA Update for: " + updateFirmwareUrl);
+        
+        // This blocks the main loop, which is fine as long as we feed wdt (which OTAUpdate does)
+        String result = OTAUpdate.performUpdate(updateFirmwareUrl);
+        
+        Serial.println("OTA Result: " + result);
+        Flasher.setStatus("OTA Result: " + result);
+        
+        // Reset flags
+        shouldUpdateFirmware = false;
+        updateFirmwareUrl = "";
+        
+        if(result == "Success") {
+            delay(1000);
+            ESP.restart();
+        }
+    }
 }
 
 // Helper to keep track of upload file across packets
@@ -867,17 +889,3 @@ void WebPortal::handleUpload(AsyncWebServerRequest *request, String filename, si
     }
 }
 
-void WebPortal::loop() {
-    if(shouldUpdateFirmware) {
-        shouldUpdateFirmware = false;
-        Flasher.setStatus("Starting OTA Update...");
-        String res = OTAUpdate.performUpdate(updateFirmwareUrl); 
-        if(res == "Success") {
-             Flasher.setStatus("OTA Success! Rebooting...");
-             delay(2000);
-             ESP.restart();
-        } else {
-             Flasher.setStatus("OTA Failed: " + res);
-        }
-    }
-}

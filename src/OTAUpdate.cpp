@@ -17,6 +17,7 @@ UpdateInfo OTAUpdateClass::checkForUpdate() {
     
     if (WiFi.status() != WL_CONNECTED) {
         Serial.println("WiFi not connected. Attempting to reconnect...");
+        WiFi.mode(WIFI_AP_STA); // Ensure AP stays active
         WiFi.begin(STA_SSID, STA_PASS);
         
         int timeout = 0;
@@ -46,32 +47,48 @@ UpdateInfo OTAUpdateClass::checkForUpdate() {
 
     Serial.println("Checking for updates...");
     
+    yield();
     if (http.begin(client, GITHUB_API_URL)) {
         http.setUserAgent("ESP32-Flasher"); // GitHub requires User-Agent
         int httpCode = http.GET();
+        yield();
 
         if (httpCode == HTTP_CODE_OK) {
             String payload = http.getString();
+            if (payload.length() == 0) {
+                info.error = "Empty response from GitHub API";
+                Serial.println("Error: " + info.error);
+                Flasher.setStatus("OTA Error: " + info.error);
+                return info;
+            }
             JsonDocument doc;
+            yield();
             DeserializationError error = deserializeJson(doc, payload);
+            yield();
 
             if (!error) {
                 String latestVersion = doc["tag_name"].as<String>();
                 info.version = latestVersion;
                 info.releaseNotes = doc["body"].as<String>();
+                yield();
                 
                 // Check if assets exist
                 JsonArray assets = doc["assets"];
                 for (JsonObject asset : assets) {
+                    yield();
                     const char* name = asset["name"];
-                    if (String(name).endsWith(".bin")) {
+                    String fileName = String(name);
+                    // Match "firmware-v*.bin" pattern to avoid flashing bootloader/partitions
+                    if (fileName.startsWith("firmware-") && fileName.endsWith(".bin")) {
                         info.url = asset["browser_download_url"].as<String>();
                         break;
                     }
+                    yield();
                 }
                 
                 // Smart Version Comparison
                 int comparison = compareVersions(latestVersion, FIRMWARE_VERSION);
+                yield();
                 if (comparison > 0) {
                     info.available = true;
                     Serial.printf("New version available: %s (Current: %s)\n", latestVersion.c_str(), FIRMWARE_VERSION);
@@ -79,15 +96,18 @@ UpdateInfo OTAUpdateClass::checkForUpdate() {
                     info.available = false; // Explicitly ensure false if not newer
                     Serial.printf("Firmware is up to date (Current: %s, Cloud: %s)\n", FIRMWARE_VERSION, latestVersion.c_str());
                 }
+                yield();
             } else {
                 Serial.println("Error: JSON parsing failed");
             }
         } else {
+            yield();
             info.error = "HTTP API Error " + String(httpCode);
             Serial.printf("Error: %s\n", info.error.c_str());
         }
         http.end();
     } else {
+        yield();
         info.error = "Connection to GitHub API failed";
         Serial.println("Error: " + info.error);
     }
@@ -161,11 +181,24 @@ String OTAUpdateClass::performUpdate(String url) {
                     size_t written = 0;
                     size_t total = contentLength;
                     int lastProgress = -1;
+                    bool headerPrinted = false;
                     
                     while(written < total) {
                         size_t size = stream->available();
                         if(size) {
                             int c = stream->readBytes(buff, ((size > sizeof(buff)) ? sizeof(buff) : size));
+                            
+                            // Debug: Print first 64 bytes
+                            if(!headerPrinted) {
+                                Serial.println("OTA First Bytes Hex:");
+                                for(int i=0; i< (c > 64 ? 64 : c); i++) Serial.printf("%02X ", buff[i]);
+                                Serial.println();
+                                Serial.println("OTA First Bytes Char:");
+                                for(int i=0; i< (c > 64 ? 64 : c); i++) Serial.print((char)buff[i]);
+                                Serial.println();
+                                headerPrinted = true;
+                            }
+                            
                             size_t ret = Update.write(buff, c);
                              if (ret != c) {
                                 Flasher.setStatus("OTA Write Error!");
