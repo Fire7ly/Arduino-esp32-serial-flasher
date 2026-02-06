@@ -34,3 +34,8 @@
 
 #extra
 /*.code-workspace
+
+
+#build folders
+/build/*
+/dist/*

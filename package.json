@@ -1,0 +1,8 @@
+{
+  "name": "my-arduino-project",
+  "version": "1.0.0",
+  "arduino": {
+    "fqbn": "esp32:esp32:esp32s3",
+    "sketch": "Arduino-esp32-serial-flasher.ino"
+  }
+}
